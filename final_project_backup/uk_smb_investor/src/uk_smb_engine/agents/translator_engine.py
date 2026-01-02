@@ -1,155 +1,110 @@
 from typing import Dict, List, Optional
 from pydantic import BaseModel
-
 # --- Data Models ---
 class DiagnosticResult(BaseModel):
-    scorecard: Dict[str, str]  # e.g., {"CAC": "£25 (Good)", "Runway": "2 Months (Critical)"}
+    scorecard: Dict[str, str]
     insights: List[str]
     action_plan: List[str]
-
-class Question(BaseModel):
-    id: str
-    text: str
-    helper_text: Optional[str] = None
-    type: str = "number" # number, boolean, select
-
-# --- Input Validation ---
-class InputValidator:
-    @staticmethod
-    def validate_and_convert(value: any, field: str) -> float:
-        try:
-            if isinstance(value, (int, float)):
-                return float(value)
-            # Remove currency symbols, commas, spaces
-            cleaned = str(value).replace('£', '').replace(',', '').replace(' ', '').strip()
-            if not cleaned:
-                return 0.0
-            return float(cleaned)
-        except:
-            return 0.0 # Default to 0 for safety in this MVP, or could raise error
-
-# --- The Specialist Agents ---
-
-class BaseAgent:
-    def diagnose(self, answers: Dict[str, any], profile: Dict[str, any]) -> Dict:
-        return {"metrics": {}, "insights": []}
-
-class UnitEconomicsAgent(BaseAgent):
-    def get_questions(self) -> List[Question]:
-        return [
-            Question(id="marketing_spend", text="Last month, what was your total spend on ads, flyers, and marketing?", helper_text="e.g. £500 on FB ads, £200 on flyers. Enter 0 if purely organic."),
-            Question(id="new_customers", text="How many NEW customers did you get last month?", helper_text="Don't count repeat business. Just new faces."),
-            Question(id="aov", text="When a customer buys, what is the typical bill amount?", helper_text="e.g. £4.50 for coffee, £50 for haircut, £1,000 for website."),
-        ]
-
-    def diagnose(self, answers: Dict[str, any], profile: Dict[str, any]) -> Dict:
-        insights = []
-        metrics = {}
-        
-        spend = InputValidator.validate_and_convert(answers.get("marketing_spend"), "Marketing Spend")
-        new_cust = InputValidator.validate_and_convert(answers.get("new_customers"), "New Customers")
-        aov = InputValidator.validate_and_convert(answers.get("aov"), "AOV")
-        
-        # 1. CAC Logic + Funnel Fallback
-        if new_cust > 0:
-            cac = spend / new_cust
-            metrics["CAC"] = f"£{cac:.2f}"
-            
-            if cac == 0:
-                insights.append("🦄 **Unicorn Signal:** You are growing purely on organic word-of-mouth. This is powerful.")
-            elif cac < aov * 0.3:
-                 metrics["CAC Risk"] = "Low"
-            elif cac > aov:
-                 insights.append("🚨 **Treadmill of Death:** You spend more to get a customer than they pay you correctly. Stop ads.")
-        else:
-             metrics["CAC"] = "N/A (No Growth)"
-             insights.append("⚠️ **Stagnation:** You acquired zero new customers last month.")
-
-        return {"metrics": metrics, "insights": insights}
-
-class CashFlowAgent(BaseAgent):
-    def get_questions(self) -> List[Question]:
-        return [
-             Question(id="cash_balance", text="What is the total cash in all business accounts right now?", helper_text="Include savings and current accounts."),
-             Question(id="monthly_burn", text="What are your total monthly costs (Rent + Staff + Materials)?", helper_text="Rough estimate of everything leaving the bank."),
-             Question(id="days_receivable", text="On average, how many days after the work is done do you get paid?", helper_text="0 for retail/shops. 30+ for many B2B items.")
-        ]
-
-    def diagnose(self, answers: Dict[str, any], profile: Dict[str, any]) -> Dict:
-        insights = []
-        metrics = {}
-        
-        cash = InputValidator.validate_and_convert(answers.get("cash_balance"), "Cash")
-        burn = InputValidator.validate_and_convert(answers.get("monthly_burn"), "Burn")
-        days_wait = InputValidator.validate_and_convert(answers.get("days_receivable"), "Days Receivable")
-        biz_model = profile.get("business_model", "Unknown")
-
-        # 1. Runway Logic
-        runway_months = cash / burn if burn > 0 else 999
-        metrics["Runway"] = f"{runway_months:.1f} Months"
-        
-        if runway_months < 1:
-            insights.append("🛑 **INSOLVENCY RISK:** You have less than 1 month of cash. Freeze hiring/spending immediately.")
-        elif runway_months < 3:
-            insights.append("⚠️ **Danger Zone:** You have less than 3 months runway. Prioritize sales over everything.")
-            
-        # 2. Bank of Client Logic (Context Aware)
-        if days_wait > 30:
-            if biz_model == "B2C":
-                insights.append(f"🛑 **B2C Cash Trap:** You are B2C but waiting {int(days_wait)} days for cash? Consumers should pay instantly. Fix your payment processor.")
-            else:
-                insights.append("🏦 **Bank of the Client:** You are financing your B2B customers. Switch to deposits or invoice factoring.")
-        elif days_wait > 7 and biz_model == "B2C":
-             insights.append("⚠️ **Slow B2C Collection:** B2C payments should be instant. Why the delay?")
-
-        return {"metrics": metrics, "insights": insights}
-
-# --- The Master Orchestrator ---
-
+# --- The V3.5 Logic Engine (Ported from session_flow.yaml) ---
 class MasterInvestorOrchestrator:
-    def __init__(self):
-        self.agents = {
-            "Growth": UnitEconomicsAgent(),
-            "Cash": CashFlowAgent(),
-            # Add others later
-        }
-    
-    def triage(self, headache: str, profile: Dict[str, any]) -> List[str]:
-        """Returns the sequence of Agents to run based on headache."""
-        # Future: Use profile['industry'] to tweak sequence (e.g. Retail always needs constraints check)
-        if headache == "Running out of money":
-            return ["Cash", "Growth"]
-        elif headache == "Not enough new customers":
-            return ["Growth", "Cash"]
-        else:
-            return ["Cash", "Growth"] # Default safety
-
     def run_diagnosis(self, headache: str, answers: Dict[str, any], profile: Dict[str, any]) -> DiagnosticResult:
-        sequence = self.triage(headache, profile)
         
-        all_metrics = {}
-        all_insights = []
+        # 1. Unpack Inputs
+        revenue = answers.get("revenue", 0.0)
+        margin = answers.get("profit_margin", 0.0)
+        cac = answers.get("cac", 0.0)
+        ltv = answers.get("ltv", 0.0)
+        price = answers.get("offer_price", 0.0)
+        upsell = answers.get("upsell_rate", 0.0)
+        bottleneck = answers.get("bottleneck", "")
+        lead_source = answers.get("lead_source", "") 
+        user_intent = answers.get("user_intent", "") 
         
-        for agent_name in sequence:
-            agent = self.agents[agent_name]
-            result = agent.diagnose(answers, profile)
-            all_metrics.update(result["metrics"])
-            all_insights.extend(result["insights"])
+        metrics = {
+            "Revenue": f"£{revenue:,.0f}",
+            "Margin": f"{margin*100:.1f}%",
+            "LTV:CAC": f"{ltv/cac:.1f}" if cac > 0 else "∞",
+            "Offer": f"£{price:,.0f}"
+        }
+        
+        insights = []
+        actions = []
+        active_states = []
+        
+        # --- PHASE 1: DETECT ACTIVE STATES ---
+        
+        # 1. Insolvency (Survival)
+        if margin < 0.0 or "Survival" in bottleneck:
+            active_states.append("insolvency_crisis")
+            insights.append("🛑 **INSOLVENCY RISK:** You are burning cash or running on fumes.")
+            actions.append("1. **FREEZE:** Stop all hiring and non-essential spend today.")
+            actions.append("2. **DEMAND:** Call top 5 debtors and collect cash immediately.")
+        # 2. Treadmill Trap (Unit Economics)
+        if (cac > price * 0.5) or ("Funnel" in bottleneck and ltv/cac < 3.0):
+            active_states.append("treadmill_trap")
+            insights.append("⚠️ **The Treadmill Trap:** You are renting customers, not acquiring them.")
+            actions.append("1. **RAISE PRICES:** Increase core price by 15% immediately.")
+            actions.append("2. **AUDIT:** Stop ads with ROAS < 2.0.")
+        # 3. Misaligned Offer (Video 5)
+        if (lead_source == "cold_traffic" and cac > 200 and price > 2000) or (cac > 1000):
+             active_states.append("misaligned_offer_funnel")
+             insights.append("🛑 **Offer Trap:** You are trying to marry strangers on the first date.")
+             actions.append("1. **SPLIT OFFER:** Create a lower-ticket 'Bridge' offer (£500-£2k).")
+             actions.append("2. **NURTURE:** Stop direct selling. Build a video funnel first.")
+        # 4. Undermonetized Excellence (Optimization)
+        if margin > 0.15 and upsell < 0.10 and "Growth" not in bottleneck:
+            active_states.append("undermonetized_excellence")
+            insights.append("🦄 **Hidden Gold Mine:** Your core business is great, but you leave money on the table.")
+            actions.append("1. **The 4 Skits:** Script 4 upsell scenarios for your team.")
+            actions.append("2. **Nudge:** Add a 'Speed' or 'VIP' option to every quote.")
+        # 5. Pricing Paralysis
+        if margin < 0.10 and margin >= 0.0 and "Stagnation" in bottleneck:
+            active_states.append("pricing_paralysis")
+            insights.append("⚠️ **Inflation Victim:** Your costs rose, but your prices didn't.")
+            actions.append("1. **The 6% Rule:** Raise prices 6% tomorrow. Use the 'Inflation Letter' script.")
+        # 6. Underspending Paradox (Growth)
+        if (ltv/cac > 4.0) and "Growth" in bottleneck:
+            active_states.append("underspending_paradox")
+            insights.append("🚀 **Green Light:** You have a money printing machine.")
+            actions.append("1. **SCALE:** Double ad spend on your best channel.")
+            actions.append("2. **FINANCE:** Secure a credit line to float the ad spend.")
+        # --- PHASE 2: PRIORITIZATION (Meta-Rules) ---
+        
+        final_plan = []
+        
+        # Rule 1: Survival blocks EVERYTHING
+        if "insolvency_crisis" in active_states:
+            final_plan = [a for a in actions if "FREEZE" in a or "DEMAND" in a]
+            insights = [i for i in insights if "INSOLVENCY" in i]
             
-        # Generate Triage Action Plan
-        action_plan = []
-        if any("INSOLVENCY" in i for i in all_insights):
-            action_plan.append("1. **IMMEDIATE:** Call top 5 debtors and demand payment.")
-            action_plan.append("2. **CUT:** Stop all non-essential software/subscriptions today.")
-        elif any("Treadmill" in i for i in all_insights):
-            action_plan.append("1. **STOP ADS:** Your marketing is burning cash. Pause campaigns.")
-            action_plan.append("2. **PRICING:** Increase prices by 15% to cover acquisition costs.")
-        else:
-            cust_name = profile.get("name", "there")
-            action_plan.append(f"1. **OPTIMIZE:** High five, {cust_name}. Your fundamentals are sound. Look for leverage.")
-            
+        # Rule 2: Offer Fix blocks Growth
+        elif "misaligned_offer_funnel" in active_states:
+            final_plan = [a for a in actions if "SPLIT" in a or "NURTURE" in a]
+            insights = [i for i in insights if "Trap" in i]
+            if "underspending_paradox" in active_states:
+                insights.append("🚫 **Growth Blocked:** High CAC detected. Fix offer before scaling ads.")
+        # Rule 3: Correction blocks Growth
+        elif "treadmill_trap" in active_states or "pricing_paralysis" in active_states:
+             final_plan = [a for a in actions if "RAISE" in a or "6%" in a]
+             if "underspending_paradox" in active_states:
+                  insights.append("🚫 **Growth Blocked:** Fix margins before pouring fuel on the fire.")
+        # Rule 4: Optimization (Nail it then Scale it)
+        elif "undermonetized_excellence" in active_states:
+             if user_intent == "open_new_location":
+                 insights.append("🛑 **Wait to Expand:** Nail your Upsell metrics first.")
+                 final_plan = [a for a in actions if "Skits" in a]
+             else:
+                 final_plan = actions
+        # Rule 5: Pure Growth
+        elif "underspending_paradox" in active_states:
+             final_plan = actions
+        
+        # Fallback
+        if not final_plan:
+            final_plan.append("1. **Review P&L:** Your numbers look average. Look for 10% cost cuts.")
+            final_plan.append("2. **Reactivate:** Email past customers with a generic offer.")
         return DiagnosticResult(
-            scorecard=all_metrics,
-            insights=all_insights,
-            action_plan=action_plan
+            scorecard=metrics,
+            insights=insights,
+            action_plan=final_plan
         )
