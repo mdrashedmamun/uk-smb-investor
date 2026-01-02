@@ -3,12 +3,9 @@ import sys
 import os
 import json
 from datetime import datetime
-
 # Add src to python path so we can import the engine from anywhere
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-
 from uk_smb_engine.agents.translator_engine import MasterInvestorOrchestrator
-
 def save_optional_data(email, name, industry, diagnosis_data):
     """Save opt-in data for future personalization"""
     if not email:  # Only save if user opted in
@@ -21,32 +18,26 @@ def save_optional_data(email, name, industry, diagnosis_data):
         "industry": industry,
         "headache": st.session_state.get("headache"),
         "scorecard": diagnosis_data.scorecard,
-        # "insights": diagnosis_data.insights # Optional: save insights too if needed
     }
     
-    # For MVP: Log to Console (Cloud Logs capture this) and Session State
     print(f"🎯 LEAD CAPTURED: {json.dumps(data_entry)}")
     
     if "user_insights" not in st.session_state:
         st.session_state.user_insights = []
     st.session_state.user_insights.append(data_entry)
-
-
 # Set Page Config
 st.set_page_config(page_title="SMB Investor Brain", page_icon="🧠", layout="centered")
-
 # Initialize Session State
 if "brain" not in st.session_state:
     st.session_state["brain"] = MasterInvestorOrchestrator()
 if "step" not in st.session_state:
-    st.session_state["step"] = "triage" # Start at Triage (Value First)
+    st.session_state["step"] = "triage"
 if "profile" not in st.session_state:
     st.session_state["profile"] = {}
 if "answers" not in st.session_state:
     st.session_state["answers"] = {}
 if "headache" not in st.session_state:
     st.session_state["headache"] = None
-
 # --- Custom CSS ---
 st.markdown("""
 <style>
@@ -57,75 +48,65 @@ st.markdown("""
     .danger-box { padding: 1rem; background-color: #fee2e2; border-radius: 5px; color: #991b1b; }
 </style>
 """, unsafe_allow_html=True)
-
 # --- HEADER ---
 st.title("🧠 The Digital Business Investor")
 st.markdown("### Get an investor-grade diagnosis of your business in 2 minutes.")
-
-# --- STEP 1: TRIAGE ---
+# --- STEP 1: INTAKE (The 7 Diagnostic Questions) ---
 if st.session_state["step"] == "triage":
-    st.write("First, let's focus on what matters.")
-    headache = st.radio(
-        "What is your biggest headache right now?",
-        ["Running out of money (Cash)", "Not enough new customers (Growth)", "Too much chaos / burnout (Operations)"]
-    )
+    st.markdown("## 🏥 The Business Physical")
+    st.write("We need 7 numbers to diagnose your business stage. Be honest - I'm a machine, I don't judge.")
     
-    if st.button("Start Diagnosis"):
-        st.session_state["headache"] = headache.split(" (")[0] # Clean string
-        st.session_state["step"] = "questions"
-        st.rerun()
-
-# --- STEP 2: QUESTIONS ---
-elif st.session_state["step"] == "questions":
-    brain = st.session_state["brain"]
-    headache = st.session_state["headache"]
-    # Profile is empty for now (Anonymous MVP)
-    profile = st.session_state.get("profile", {})
-    
-    # Get sequence of agents based on headache & profile
-    agent_sequence = brain.triage(headache, profile)
-    
-    # Flatten all questions from all agents in sequence
-    all_questions = []
-    for agent_name in agent_sequence:
-        agent = brain.agents[agent_name]
-        all_questions.extend(agent.get_questions())
-    
-    # Progress Logic
-    total_q = len(all_questions)
-    
-    st.progress(0.1)
-    st.caption(f"Ready to analyze {total_q} strategic points.")
-    
-    with st.form("diagnosis_form"):
-        st.write(f"**Focus Area: {headache}**")
+    with st.form("intake_form"):
+        col1, col2 = st.columns(2)
         
-        for q in all_questions:
-            val = st.text_input(q.text, help=q.helper_text, key=q.id)
+        with col1:
+            revenue = st.text_input("1. Annual Revenue ($)", help="e.g. 1000000")
+            margin = st.slider("2. Net Profit Margin (%)", -20, 50, 10, help="What do you keep after everything?")
+            cac = st.text_input("3. Cost to Acquire Customer ($)", help="How much marketing spend to get 1 sale?")
+            ltv = st.text_input("4. Customer Lifetime Value ($)", help="How much does one customer pay you in total over years?")
+        with col2:
+            offer_price = st.text_input("5. Price of Core Offer ($)", help="What is the price of your main product/service?")
+            upsell_rate = st.slider("6. Upsell / Retainer Conversion (%)", 0, 100, 15, help="What % of customers buy your next thing?")
+            bottleneck = st.selectbox(
+                "7. What feels broken?",
+                ["Running out of cash (Survival)", "Sales are flat (Stagnation)", "Chaotic / No Systems (Operations)", "Marketing is expensive (Funnel)", "I need to scale (Growth)"]
+            )
         
-        if st.form_submit_button("Generate Report"):
-            # UI Validation
-            errors = []
-            for q in all_questions:
-                val = st.session_state.get(q.id, "")
+        submitted = st.form_submit_button("Run Diagnosis 🚀")
+        
+        if submitted:
+            try:
+                def start_clean(val):
+                    if not val: return 0.0
+                    return float(val.replace(',', '').replace('$', '').replace('£', '').strip())
+                answers = {
+                    "revenue": start_clean(revenue),
+                    "profit_margin": margin / 100.0,
+                    "cac": start_clean(cac),
+                    "ltv": start_clean(ltv),
+                    "offer_price": start_clean(offer_price),
+                    "upsell_rate": upsell_rate / 100.0,
+                    "bottleneck": bottleneck.split(" (")[0],
+                    "net_profit": start_clean(revenue) * (margin / 100.0)
+                }
                 
-                # Check if it looks roughly like a number
-                clean = val.replace('£', '').replace(',', '').replace('.', '').replace(' ', '').strip()
-                if val and not clean.isdigit():
-                    errors.append(f"Invalid number for: {q.text}")
-
-            if errors:
-                for e in errors:
-                    st.error(e)
-            else:
-                # Collect answers from state
-                for q in all_questions:
-                    st.session_state["answers"][q.id] = st.session_state[q.id]
+                # Special logic
+                if "Growth" in bottleneck:
+                    answers["user_intent"] = "open_new_location"
+                elif "Funnel" in bottleneck:
+                    answers["lead_source"] = "cold_traffic"
+                
+                st.session_state["answers"] = answers
+                st.session_state["headache"] = answers["bottleneck"]
                 st.session_state["step"] = "results"
                 st.rerun()
-
+            except ValueError:
+                st.error("Please enter valid numbers.")
 # --- STEP 3: RESULTS ---
 elif st.session_state["step"] == "results":
+    if st.button("← Back to Questions"):
+        st.session_state["step"] = "triage"
+        st.rerun()
     brain = st.session_state["brain"]
     result = brain.run_diagnosis(
         st.session_state["headache"], 
@@ -135,7 +116,6 @@ elif st.session_state["step"] == "results":
     
     st.markdown("## 📊 Your Investor Scorecard")
     
-    # Display Scorecard
     cols = st.columns(len(result.scorecard))
     for i, (metric, value) in enumerate(result.scorecard.items()):
         cols[i].metric(metric, value)
@@ -145,13 +125,12 @@ elif st.session_state["step"] == "results":
     st.markdown("## 🔍 Strategic Insights")
     for insight in result.insights:
         if "🦄" in insight:
-             st.markdown(f'<div class="success-box">{insight}</div>', unsafe_allow_html=True)
+             st.success(insight)
         elif "🛑" in insight:
-             st.markdown(f'<div class="danger-box">{insight}</div>', unsafe_allow_html=True)
+             st.error(insight)
         else:
-             st.markdown(f'<div class="warning-box">{insight}</div>', unsafe_allow_html=True)
-        st.write("") # Spacer
-
+             st.warning(insight)
+        st.write("")
     st.markdown("## 🚀 Your 90-Day Action Plan")
     for step in result.action_plan:
         st.write(step)
@@ -163,10 +142,7 @@ elif st.session_state["step"] == "results":
         st.write("We'll send you this analysis plus a weekly growth tip.")
         name = st.text_input("Name")
         email = st.text_input("Email")
-        industry = st.selectbox(
-            "Industry", 
-            ["Retail", "Service", "Trade", "Tech", "Other"]
-        )
+        industry = st.selectbox("Industry", ["Retail", "Service", "Trade", "Tech", "Other"])
         
         if st.button("Send Report"):
             if email:
@@ -174,7 +150,6 @@ elif st.session_state["step"] == "results":
                 st.success(f"Report sent to {email}! (Data Saved)")
             else:
                 st.error("Please enter an email.")
-
     if st.button("Start Over"):
         st.session_state["step"] = "triage"
         st.session_state["answers"] = {}
